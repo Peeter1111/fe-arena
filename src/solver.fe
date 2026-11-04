@@ -1,0 +1,38 @@
+use ingot::game::Game
+
+/// Perfect-play score from the side to move: win = 1, draw = 0, loss = -1.
+pub fn solve<G: Game>(_ state: G::State) -> i8 {
+    if G::winner(state) != 0 {
+        return -1
+    }
+    var best: i8 = -1
+    var mv: u8 = 0
+    while mv < G::move_space() {
+        if G::legal(state, mv) {
+            let score = -solve<G>(G::apply(state, mv))
+            if score > best {
+                best = score
+            }
+            if best == 1 { return 1 }
+        }
+        mv += 1
+    }
+    best
+}
+
+pub fn best_move<G: Game>(_ state: G::State) -> u8 {
+    var best_score: i8 = -2
+    var best: u8 = 255
+    var mv: u8 = 0
+    while mv < G::move_space() {
+        if G::legal(state, mv) {
+            let score = -solve<G>(G::apply(state, mv))
+            if score > best_score {
+                best_score = score
+                best = mv
+            }
+        }
+        mv += 1
+    }
+    best
+}

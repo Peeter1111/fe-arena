@@ -1,0 +1,11 @@
+// Fe 26.5.0 does not parse type parameters on high-level contract items.
+// Expected: a generic contract can be specialized at a concrete Game type.
+// Actual: error[1-0001] at `<G: Rules>`: "contract definition requires a body".
+pub trait Rules {
+    fn initial() -> u256
+}
+
+pub contract GenericMatch<G: Rules> {
+    mut state: u256,
+    init() uses (mut state) { state = G::initial() }
+}

@@ -1,0 +1,69 @@
+use ingot::game::Game
+
+const TURN_BIT: u256 = 1 << 18
+
+pub struct TicTacToe {}
+pub struct TicTacToeState(pub u256)
+impl Copy for TicTacToeState {}
+
+fn cell(_ word: u256, _ pos: u8) -> u8 {
+    ((word >> (pos as u256 * 2)) & 3).downcast_unchecked()
+}
+
+fn full(_ word: u256) -> bool {
+    var i: u8 = 0
+    while i < 9 {
+        if cell(word, i) == 0 {
+            return false
+        }
+        i += 1
+    }
+    true
+}
+
+impl Game for TicTacToe {
+    type State = TicTacToeState
+    fn initial() -> Self::State {
+        TicTacToeState(0)
+    }
+    fn encode(_ state: Self::State) -> u256 {
+        state.0
+    }
+    fn decode(_ word: u256) -> Self::State {
+        TicTacToeState(word)
+    }
+    fn turn(_ state: Self::State) -> u8 {
+        if state.0 & TURN_BIT == 0 { 1 } else { 2 }
+    }
+    fn move_space() -> u8 {
+        9
+    }
+    fn legal(_ state: Self::State, _ mv: u8) -> bool {
+        mv < 9 && Self::winner(state) == 0 && cell(state.0, mv) == 0
+    }
+    fn apply(_ state: Self::State, _ mv: u8) -> Self::State {
+        assert!(Self::legal(state, mv), "illegal tic-tac-toe move")
+        let mark: u256 = Self::turn(state) as u256
+        let board = state.0 | (mark << (mv as u256 * 2))
+        TicTacToeState(board ^ TURN_BIT)
+    }
+    fn winner(_ state: Self::State) -> u8 {
+        let lines: [(u8, u8, u8); 8] = [
+            (0, 1, 2),
+            (3, 4, 5),
+            (6, 7, 8),
+            (0, 3, 6),
+            (1, 4, 7),
+            (2, 5, 8),
+            (0, 4, 8),
+            (2, 4, 6),
+        ]
+        for line in lines {
+            let a = cell(state.0, line.0)
+            if a != 0 && a == cell(state.0, line.1) && a == cell(state.0, line.2) {
+                return a
+            }
+        }
+        if full(state.0) { 3 } else { 0 }
+    }
+}

@@ -1,0 +1,118 @@
+use ingot::game::Game
+use std::evm::{StorageMap, keccak_words}
+
+pub struct MatchState {
+    pub state: u256,
+    pub p1: Address,
+    pub p2: Address,
+    pub commitment: u256,
+    pub deadline: Timestamp,
+    pub forced_winner: u8,
+    pub active: bool,
+}
+impl Copy for MatchState {}
+
+pub struct MatchBook {
+    pub next_id: u256,
+    pub timeout: Duration,
+    pub matches: StorageMap<u256, MatchState>,
+}
+
+pub fn commitment(_ id: u256, _ move_code: u8, _ secret: u256, _ player: Address) -> u256 {
+    keccak_words([id, move_code as u256, secret, player.word()])
+}
+
+impl MatchBook {
+    pub fn init(mut self, _ timeout: Duration) {
+        self.next_id = 1
+        self.timeout = timeout
+    }
+
+    pub fn create<G: Game>(mut self, _ p1: Address, _ p2: Address) -> u256 {
+        let id = self.next_id
+        self.next_id += 1
+        self.matches
+            .set(
+                key: id,
+                value: MatchState {
+                    state: G::encode(state: G::initial()),
+                    p1,
+                    p2,
+                    commitment: 0,
+                    deadline: Timestamp::from_seconds(0),
+                    forced_winner: 0,
+                    active: true,
+                },
+            )
+        id
+    }
+
+    pub fn get(self, _ id: u256) -> MatchState {
+        let item = self.matches.get(key: id)
+        assert!(item.active, "unknown match")
+        item
+    }
+
+    pub fn winner<G: Game>(self, _ id: u256) -> u8 {
+        let item = self.get(id)
+        if item.forced_winner != 0 {
+            item.forced_winner
+        } else {
+            G::winner(state: G::decode(item.state))
+        }
+    }
+
+    pub fn commit<G: Game>(
+        mut self,
+        _ id: u256,
+        _ hash: u256,
+        _ caller: Address,
+        _ now: Timestamp,
+    ) {
+        var item = self.get(id)
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(item.commitment == 0, "move already committed")
+        let turn = G::turn(state: G::decode(item.state))
+        let expected = if turn == 1 { item.p1 } else { item.p2 }
+        assert!(caller == expected, "not your turn")
+        assert!(hash != 0, "zero commitment")
+        item.commitment = hash
+        item.deadline = now + self.timeout
+        self.matches.set(key: id, value: item)
+    }
+
+    pub fn reveal<G: Game>(
+        mut self,
+        _ id: u256,
+        _ move_code: u8,
+        _ secret: u256,
+        _ caller: Address,
+    ) -> u8 {
+        var item = self.get(id)
+        let turn = G::turn(state: G::decode(item.state))
+        let expected = if turn == 1 { item.p1 } else { item.p2 }
+        assert!(caller == expected, "not your turn")
+        assert!(
+            item.commitment == commitment(id, move_code, secret, caller),
+            "bad reveal",
+        )
+        let state = G::decode(item.state)
+        assert!(G::legal(state, move_code), "illegal move")
+        item.state = G::encode(state: G::apply(state, move_code))
+        item.commitment = 0
+        item.deadline = Timestamp::from_seconds(0)
+        self.matches.set(key: id, value: item)
+        G::winner(state: G::decode(item.state))
+    }
+
+    pub fn claim_timeout<G: Game>(mut self, _ id: u256, _ now: Timestamp) -> u8 {
+        var item = self.get(id)
+        assert!(item.commitment != 0, "no pending reveal")
+        assert!(now >= item.deadline, "reveal window open")
+        let turn = G::turn(state: G::decode(item.state))
+        item.forced_winner = if turn == 1 { 2 } else { 1 }
+        item.commitment = 0
+        self.matches.set(key: id, value: item)
+        item.forced_winner
+    }
+}

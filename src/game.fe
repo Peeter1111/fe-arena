@@ -1,0 +1,34 @@
+/// A deterministic, alternating-turn, perfect-information game.
+/// Game-specific pure state is encoded into one word for contract storage.
+pub trait Game {
+    type State: Copy
+
+    fn initial() -> Self::State
+    fn encode(_ state: Self::State) -> u256
+    fn decode(_ word: u256) -> Self::State
+    fn turn(_ state: Self::State) -> u8
+    fn legal(_ state: Self::State, _ mv: u8) -> bool
+    fn apply(_ state: Self::State, _ mv: u8) -> Self::State
+    /// 0 = ongoing, 1 = player one, 2 = player two, 3 = draw.
+    fn winner(_ state: Self::State) -> u8
+    /// Number of move codes the generic solver should enumerate.
+    fn move_space() -> u8
+}
+
+pub fn initial_word<G: Game>() -> u256 {
+    G::encode(state: G::initial())
+}
+
+pub fn apply_word<G: Game>(word: u256, mv: u8) -> u256 {
+    let state = G::decode(word)
+    assert!(G::legal(state, mv), "illegal move")
+    G::encode(state: G::apply(state, mv))
+}
+
+pub fn winner_word<G: Game>(word: u256) -> u8 {
+    G::winner(state: G::decode(word))
+}
+
+pub fn turn_word<G: Game>(word: u256) -> u8 {
+    G::turn(state: G::decode(word))
+}

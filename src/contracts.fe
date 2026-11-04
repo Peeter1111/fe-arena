@@ -1,0 +1,84 @@
+use ingot::connect4::MiniConnect4
+use ingot::match_engine::MatchBook
+use ingot::nim::Nim
+use ingot::tictactoe::TicTacToe
+use std::abi::sol
+
+pub msg ArenaMsg {
+    #[selector = sol("create(address)")]
+    Create { opponent: Address } -> u256,
+    #[selector = sol("commit(uint256,uint256)")]
+    Commit { id: u256, hash: u256 },
+    #[selector = sol("reveal(uint256,uint8,uint256)")]
+    Reveal { id: u256, move_code: u8, secret: u256 } -> u8,
+    #[selector = sol("claimTimeout(uint256)")]
+    ClaimTimeout { id: u256 } -> u8,
+    #[selector = sol("state(uint256)")]
+    State { id: u256 } -> (u256, u8),
+}
+
+pub contract TicTacToeMatch uses (ctx: Ctx) {
+    mut book: MatchBook,
+    init(timeout: Duration) uses (mut book) { book.init(timeout) }
+    recv ArenaMsg {
+        Create { opponent } -> u256 uses (ctx, mut book) {
+            book.create<TicTacToe>(ctx.caller(), opponent)
+        }
+        Commit { id, hash } uses (ctx, mut book) {
+            book.commit<TicTacToe>(id, hash, ctx.caller(), ctx.timestamp())
+        }
+        Reveal { id, move_code, secret } -> u8 uses (ctx, mut book) {
+            book.reveal<TicTacToe>(id, move_code, secret, ctx.caller())
+        }
+        ClaimTimeout { id } -> u8 uses (ctx, mut book) {
+            book.claim_timeout<TicTacToe>(id, ctx.timestamp())
+        }
+        State { id } -> (u256, u8) uses (book) {
+            (book.get(id).state, book.winner<TicTacToe>(id))
+        }
+    }
+}
+
+pub contract Connect4Match uses (ctx: Ctx) {
+    mut book: MatchBook,
+    init(timeout: Duration) uses (mut book) { book.init(timeout) }
+    recv ArenaMsg {
+        Create { opponent } -> u256 uses (ctx, mut book) {
+            book.create<MiniConnect4>(ctx.caller(), opponent)
+        }
+        Commit { id, hash } uses (ctx, mut book) {
+            book.commit<MiniConnect4>(id, hash, ctx.caller(), ctx.timestamp())
+        }
+        Reveal { id, move_code, secret } -> u8 uses (ctx, mut book) {
+            book.reveal<MiniConnect4>(id, move_code, secret, ctx.caller())
+        }
+        ClaimTimeout { id } -> u8 uses (ctx, mut book) {
+            book.claim_timeout<MiniConnect4>(id, ctx.timestamp())
+        }
+        State { id } -> (u256, u8) uses (book) {
+            (book.get(id).state, book.winner<MiniConnect4>(id))
+        }
+    }
+}
+
+pub contract NimMatch uses (ctx: Ctx) {
+    mut book: MatchBook,
+    init(timeout: Duration) uses (mut book) { book.init(timeout) }
+    recv ArenaMsg {
+        Create { opponent } -> u256 uses (ctx, mut book) {
+            book.create<Nim>(ctx.caller(), opponent)
+        }
+        Commit { id, hash } uses (ctx, mut book) {
+            book.commit<Nim>(id, hash, ctx.caller(), ctx.timestamp())
+        }
+        Reveal { id, move_code, secret } -> u8 uses (ctx, mut book) {
+            book.reveal<Nim>(id, move_code, secret, ctx.caller())
+        }
+        ClaimTimeout { id } -> u8 uses (ctx, mut book) {
+            book.claim_timeout<Nim>(id, ctx.timestamp())
+        }
+        State { id } -> (u256, u8) uses (book) {
+            (book.get(id).state, book.winner<Nim>(id))
+        }
+    }
+}
