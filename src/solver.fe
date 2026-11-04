@@ -1,23 +1,36 @@
 use ingot::game::Game
 
-/// Perfect-play score from the side to move: win = 1, draw = 0, loss = -1.
-pub fn solve<G: Game>(_ state: G::State) -> i8 {
-    if G::winner(state) != 0 {
-        return -1
-    }
+fn negamax<G: Game>(_ state: G::State, _ alpha0: i8, _ beta: i8) -> i8 {
+    let outcome = G::winner(state)
+    if outcome == 3 { return 0 }
+    if outcome != 0 { return -1 }
+    var alpha = alpha0
     var best: i8 = -1
     var mv: u8 = 0
     while mv < G::move_space() {
         if G::legal(state, mv) {
-            let score = -solve<G>(G::apply(state, mv))
+            let score = -negamax<G>(G::apply(state, mv), -beta, -alpha)
             if score > best {
                 best = score
             }
-            if best == 1 { return 1 }
+            if score > alpha {
+                alpha = score
+            }
+            if alpha >= beta {
+                return alpha
+            }
         }
         mv += 1
     }
     best
+}
+
+/// Perfect-play score from the side to move: win = 1, draw = 0, loss = -1.
+///
+/// Alpha-beta pruning preserves the exhaustive minimax result while skipping
+/// branches that cannot affect the answer.
+pub fn solve<G: Game>(_ state: G::State) -> i8 {
+    negamax<G>(state, -2, 2)
 }
 
 pub fn best_move<G: Game>(_ state: G::State) -> u8 {
@@ -26,7 +39,7 @@ pub fn best_move<G: Game>(_ state: G::State) -> u8 {
     var mv: u8 = 0
     while mv < G::move_space() {
         if G::legal(state, mv) {
-            let score = -solve<G>(G::apply(state, mv))
+            let score = -negamax<G>(G::apply(state, mv), -2, 2)
             if score > best_score {
                 best_score = score
                 best = mv

@@ -1,0 +1,211 @@
+use ingot::{
+    ArenaMsg,
+    Connect4Match,
+    Game,
+    MiniConnect4,
+    Nim,
+    NimMatch,
+    NimState,
+    TicTacToe,
+    TicTacToeMatch,
+    commitment,
+    solve,
+    xor_value,
+}
+use std::evm::Evm
+
+#[test]
+fn tic_tac_toe_perfect_play_is_a_draw() {
+    assert!(solve<TicTacToe>(TicTacToe::initial()) == 0)
+}
+
+#[test]
+fn nim_solver_matches_xor_theorem() {
+    var a: u8 = 0
+    while a < 4 {
+        var b: u8 = 0
+        while b < 4 {
+            var c: u8 = 0
+            while c < 4 {
+                if a != 0 || b != 0 || c != 0 {
+                    let state = NimState(a as u256 | ((b as u256) << 4) | ((c as u256) << 8))
+                    let score = solve<Nim>(state)
+                    let expected: i8 = if xor_value(state) == 0 { -1 } else { 1 }
+                    assert!(score == expected)
+                }
+                c += 1
+            }
+            b += 1
+        }
+        a += 1
+    }
+}
+
+#[test]
+fn compact_games_have_expected_winners() {
+    var t = TicTacToe::initial()
+    for mv in [0, 3, 1, 4, 2] {
+        t = TicTacToe::apply(t, mv)
+    }
+    assert!(TicTacToe::winner(t) == 1)
+
+    var c = MiniConnect4::initial()
+    for mv in [0, 1, 0, 1, 0, 1, 0] {
+        c = MiniConnect4::apply(c, mv)
+    }
+    assert!(MiniConnect4::winner(c) == 1)
+}
+
+#[test]
+fn commit_reveal_and_timeout_work() uses (evm: mut Evm) {
+    let player = evm.address()
+    let target = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 1)
+    let id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Create { opponent: player },
+        )
+    let secret: u256 = 12345
+    let hash = commitment(id, 0, secret, player)
+    evm.call(
+        addr: target,
+        gas: 500000,
+        value: Wei::zero(),
+        message: ArenaMsg::Commit { id, hash },
+    )
+    let winner: u8 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Reveal { id, move_code: 0, secret },
+        )
+    assert!(winner == 0)
+    let (word, remote_winner): (u256, u8) = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::State { id },
+        )
+    let direct = TicTacToe::apply(TicTacToe::initial(), 0)
+    assert!(word == TicTacToe::encode(direct))
+    assert!(remote_winner == 0)
+
+    let timeout_id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Create { opponent: player },
+        )
+    let timeout_hash = commitment(timeout_id, 4, 9, player)
+    evm.call(
+        addr: target,
+        gas: 500000,
+        value: Wei::zero(),
+        message: ArenaMsg::Commit { id: timeout_id, hash: timeout_hash },
+    )
+    let timeout_winner: u8 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::ClaimTimeout { id: timeout_id },
+        )
+    assert!(timeout_winner == 2)
+}
+
+fn next_random(_ seed: u256) -> u256 {
+    var x = seed
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x ^ (x << 17)
+}
+
+fn pick_legal<G: Game>(_ state: G::State, _ random: u256) -> u8 {
+    let space = G::move_space()
+    var mv: u8 = (random % space as u256).downcast_unchecked()
+    var tries: u8 = 0
+    while tries < space {
+        if G::legal(state, mv) {
+            return mv
+        }
+        mv = (mv + 1) % space
+        tries += 1
+    }
+    255
+}
+
+fn replay<G: Game>(_ target: Address, _ wanted: u256, _ seed0: u256) -> u256
+uses (evm: mut Evm)
+{
+    let player = evm.address()
+    var seed = seed0
+    var moved: u256 = 0
+    var state = G::initial()
+    var id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Create { opponent: player },
+        )
+
+    while moved < wanted {
+        if G::winner(state) != 0 {
+            state = G::initial()
+            id = evm
+                .call(
+                    addr: target,
+                    gas: 500000,
+                    value: Wei::zero(),
+                    message: ArenaMsg::Create { opponent: player },
+                )
+        }
+        seed = next_random(seed)
+        let mv = pick_legal<G>(state, seed)
+        assert!(mv != 255)
+        let secret = seed ^ moved ^ (id << 32)
+        let hash = commitment(id, mv, secret, player)
+        evm.call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Commit { id, hash },
+        )
+        let remote_reveal: u8 = evm
+            .call(
+                addr: target,
+                gas: 500000,
+                value: Wei::zero(),
+                message: ArenaMsg::Reveal { id, move_code: mv, secret },
+            )
+        state = G::apply(state, mv)
+        let (word, remote_winner): (u256, u8) = evm
+            .call(
+                addr: target,
+                gas: 500000,
+                value: Wei::zero(),
+                message: ArenaMsg::State { id },
+            )
+        assert!(word == G::encode(state))
+        assert!(remote_winner == G::winner(state))
+        assert!(remote_reveal == remote_winner)
+        moved += 1
+    }
+    moved
+}
+
+#[test]
+fn differential_replay_10200_moves() uses (evm: mut Evm) {
+    let ttt = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 10)
+    let c4 = evm.create2<Connect4Match>(value: Wei::zero(), args: (Duration::zero(),), salt: 11)
+    let nim = evm.create2<NimMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 12)
+    let a = replay<TicTacToe>(ttt, 3400, 0x12345678)
+    let b = replay<MiniConnect4>(c4, 3400, 0x89abcdef)
+    let c = replay<Nim>(nim, 3400, 0xf00dcafe)
+    assert!(a + b + c == 10200)
+}
