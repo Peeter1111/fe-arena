@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Any Fe release from 26.5.0 on is allowed for the contest.
+  FE_VERSION: v26.5.0
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Fe
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/argotorg/fe/master/feup/feup.sh | bash -s -- --version "$FE_VERSION" --no-modify-path
+          echo "$HOME/.fe/bin" >> "$GITHUB_PATH"
+      - run: fe --version
+      - run: fe fmt --check
+      - run: fe test
+      - run: fe build
