@@ -1,0 +1,78 @@
+use arena::{Game, TicTacToe, TicTacToeState, best_move}
+use std::io::{Read, Write, host, read_char, write, write_char, writeln}
+
+fn mark(_ state: TicTacToeState, _ pos: u8) -> i32 {
+    let cell: u8 = ((state.0 >> (pos as u256 * 2)) & 3).downcast_unchecked()
+    if cell == 1 {
+        88
+    } else if cell == 2 { 79 } else { 48 + pos as i32 }
+}
+
+fn board(_ state: TicTacToeState) {
+    with (Write = host()) {
+        var pos: u8 = 0
+        while pos < 9 {
+            write_char(mark(state, pos))
+            if pos % 3 == 2 {
+                writeln("")
+            } else {
+                write(" ")
+            }
+            pos += 1
+        }
+    }
+}
+
+fn human_move(_ state: TicTacToeState) -> u8 {
+    with (Read = host(), Write = host()) {
+        while true {
+            write("move 0-8: ")
+            let ch = read_char()
+            // Consume the newline when stdin is a terminal or a transcript pipe.
+            let _ = read_char()
+            if ch >= 48 && ch <= 56 {
+                let mv: u8 = (ch - 48).downcast_unchecked()
+                if TicTacToe::legal(state, mv) {
+                    return mv
+                }
+            }
+            writeln("illegal move")
+        }
+        255
+    }
+}
+
+pub fn main() -> i32 {
+    with (Write = host()) {
+        writeln("Arena / Tic-Tac-Toe")
+        writeln("you are X; the generic perfect-play solver is O")
+    }
+    var state = TicTacToe::initial()
+    while TicTacToe::winner(state) == 0 {
+        board(state)
+        if TicTacToe::turn(state) == 1 {
+            let mv = human_move(state)
+            state = TicTacToe::apply(state, mv)
+        } else {
+            let mv = best_move<TicTacToe>(state)
+            with (Write = host()) {
+                write("solver: ")
+                write_char(48 + mv as i32)
+                writeln("")
+            }
+            state = TicTacToe::apply(state, mv)
+        }
+    }
+    board(state)
+    with (Write = host()) {
+        let outcome = TicTacToe::winner(state)
+        if outcome == 1 {
+            writeln("X wins")
+        } else if outcome == 2 {
+            writeln("O wins")
+        } else {
+            writeln("draw")
+        }
+    }
+    0
+}

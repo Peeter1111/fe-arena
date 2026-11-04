@@ -1,0 +1,116 @@
+{
+  "fe_version": "fe 26.5.0 (3dab95f)",
+  "anvil_version": "anvil Version: 1.9.0",
+  "optimization": 2,
+  "sender": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "games": [
+    {
+      "contract": "TicTacToeMatch",
+      "address": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+      "deployment_gas": 444402,
+      "moves": [
+        0,
+        3,
+        1,
+        4,
+        2
+      ],
+      "commit_gas": [
+        79666,
+        79937,
+        79999,
+        80203,
+        80255
+      ],
+      "reveal_gas": [
+        54689,
+        38239,
+        38533,
+        38986,
+        37945
+      ],
+      "total_gas": [
+        134355,
+        118176,
+        118532,
+        119189,
+        118200
+      ],
+      "average_commit_gas": 80012,
+      "average_reveal_gas": 41678,
+      "average_move_gas": 121690
+    },
+    {
+      "contract": "Connect4Match",
+      "address": "0xa51c1fc2f0d1a1b8494ed1fe312d7c3a78ed91c0",
+      "deployment_gas": 535391,
+      "moves": [
+        0,
+        1,
+        0,
+        1,
+        0
+      ],
+      "commit_gas": [
+        80815,
+        81129,
+        81223,
+        81424,
+        81510
+      ],
+      "reveal_gas": [
+        58352,
+        41979,
+        42489,
+        42982,
+        43467
+      ],
+      "total_gas": [
+        139167,
+        123108,
+        123712,
+        124406,
+        124977
+      ],
+      "average_commit_gas": 81220,
+      "average_reveal_gas": 45853,
+      "average_move_gas": 127074
+    },
+    {
+      "contract": "NimMatch",
+      "address": "0xa85233c63b9ee964add6f2cffe00fd84eb32338f",
+      "deployment_gas": 422453,
+      "moves": [
+        16,
+        8,
+        17,
+        0,
+        16
+      ],
+      "commit_gas": [
+        78813,
+        78820,
+        78813,
+        78820,
+        78852
+      ],
+      "reveal_gas": [
+        35522,
+        35514,
+        35522,
+        35536,
+        35584
+      ],
+      "total_gas": [
+        114335,
+        114334,
+        114335,
+        114356,
+        114436
+      ],
+      "average_commit_gas": 78823,
+      "average_reveal_gas": 35535,
+      "average_move_gas": 114359
+    }
+  ]
+}

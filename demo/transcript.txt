@@ -1,0 +1,41 @@
+Wrote out/Connect4Match.bin
+Wrote out/Connect4Match.runtime.bin
+Wrote out/NimMatch.bin
+Wrote out/NimMatch.runtime.bin
+Wrote out/TicTacToeMatch.bin
+Wrote out/TicTacToeMatch.runtime.bin
+Wrote out/Connect4Match.abi.json
+Wrote out/NimMatch.abi.json
+Wrote out/TicTacToeMatch.abi.json
+Wrote out/arena_demo
+local TicTacToeMatch: 0x5fbdb2315678afecb367f032d93f642f64180aa3 (deploy gas 444402)
+native demo uses the same Game implementation and generic solver
+
+Arena / Tic-Tac-Toe
+you are X; the generic perfect-play solver is O
+0 1 2
+3 4 5
+6 7 8
+move 0-8: X 1 2
+3 4 5
+6 7 8
+solver: 4
+X 1 2
+3 O 5
+6 7 8
+move 0-8: X X 2
+3 O 5
+6 7 8
+solver: 2
+X X O
+3 O 5
+6 7 8
+move 0-8: illegal move
+move 0-8: X X O
+X O 5
+6 7 8
+solver: 6
+X X O
+X O 5
+O 7 8
+O wins
