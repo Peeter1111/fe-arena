@@ -1,282 +1,110 @@
 # Arena
 
-**Pitch:** Define a deterministic game once in Fe, then reuse the exact same rules for an on-chain commit/reveal match engine, a perfect-play solver, and differential tests.
+**One Fe ruleset, two honest match protocols.** Alternating-turn games use a single `play` transaction per move; a simultaneous game uses commitments because both players must choose before either move is disclosed. Pure Fe traits supply the rules to EVM contracts, a generic perfect-play solver for turn-based games, and contract-versus-rules tests.
 
-**Fe highlight:** One associated-type `Game` trait drives both generic EVM `MatchBook` methods and the native `solve<G>` solver, while contract capabilities stay explicit in `uses (...)`.
+Arena includes Tic-Tac-Toe, 4×4 Connect Four, 1-3-5 Nim, and best-of-three-round rock-paper-scissors (RPS). It has no wagers, tokens, external services, or real-money dependencies.
 
-Arena is a small game engine built to make Fe's traits, associated types, generics, effects, messages, storage, hashing, testing, and native backend visible in one project. It ships three compact games, a shared on-chain match protocol, a generic alpha-beta solver, a 10,200-move contract-vs-rules differential test, measured gas, and a native terminal demo.
+## Try it
 
-**Verified locally:** 5/5 tests pass; the seeded differential replay covers 10,200 contract moves; optimal Tic-Tac-Toe is a draw; and measured committed-move gas ranges from 114,359 (Nim) to 127,074 (Mini Connect Four).
-
-Quick proof:
+Use Fe 26.5.0 and Foundry Anvil/Cast. The Python scripts find `fe`, `anvil` and `cast` on `PATH`, or use `FE`, `ANVIL` and `CAST`. They also detect the contest's local toolchain layout.
 
 ```sh
 fe --version
-fe test --jobs 1
-python3 scripts/gas.py
-python3 scripts/demo.py
-```
-
-The project was built and measured with **Fe 26.5.0 (3dab95f)**. The two Python commands also need Foundry's `anvil` and `cast` on `PATH` (or `ANVIL`/`CAST` environment variables).
-
-## The problem
-
-Small on-chain games usually duplicate their rules: one copy decides what the contract accepts, another drives a bot or solver, and another powers tests or a UI. Those copies drift. A legal move in one layer can become illegal in another.
-
-Arena makes the game rules the single source of truth. A game implements one pure `Game` trait. The contract engine, solver, native demo, and test harness all call that implementation directly.
-
-This is useful beyond the three bundled games: it is a compact example of how Fe can express reusable domain logic once while still compiling concrete EVM contracts with narrow, explicit capabilities.
-
-## Approach
-
-The core interface has an associated state type and only pure operations:
-
-```fe
-pub trait Game {
-    type State: Copy
-    fn initial() -> Self::State
-    fn encode(_ state: Self::State) -> u256
-    fn decode(_ word: u256) -> Self::State
-    fn turn(_ state: Self::State) -> u8
-    fn legal(_ state: Self::State, _ mv: u8) -> bool
-    fn apply(_ state: Self::State, _ mv: u8) -> Self::State
-    fn winner(_ state: Self::State) -> u8
-    fn move_space() -> u8
-}
-```
-
-Each game keeps its board in one word on chain:
-
-| Game | Fe source | Form | Formatted LOC |
-| --- | --- | --- | ---: |
-| Tic-Tac-Toe | `src/tictactoe.fe` | 9 cells, 2 bits/cell + turn bit | 69 |
-| Mini Connect Four | `src/connect4.fe` | 4×4 board, connect 4, 2 bits/cell + turn bit | 78 |
-| Nim | `src/nim.fe` | 1-3-5 heaps, 4 bits/heap + turn bit | 57 |
-
-The core library is **498 Fe lines** excluding `src/tests.fe` and the native demo.
-
-The on-chain protocol is the same for every game:
-
-1. `create(opponent)` creates a match and stores the game's initial word.
-2. The player whose turn it is sends `commit(id, hash)`.
-3. The same player sends `reveal(id, move, secret)`; the contract verifies `keccak256(id, move, secret, player)`, checks the shared game rules, and advances the compact state.
-4. A missed reveal can be resolved with `claimTimeout(id)`.
-5. `state(id)` returns the compact state word and winner code.
-
-The match protocol does not include wagers or token transfers. It is deliberately a game-state primitive rather than a gambling contract.
-
-## Fe highlight
-
-The main Fe-specific idea is **generic domain logic plus explicit effects**.
-
-`MatchBook` is one storage type whose game-dependent methods are parameterized by `G: Game`:
-
-```fe
-pub fn reveal<G: Game>(
-    mut self,
-    _ id: u256,
-    _ move_code: u8,
-    _ secret: u256,
-    _ caller: Address,
-) -> u8
-```
-
-The concrete EVM shells specialize it:
-
-```fe
-Reveal { id, move_code, secret } -> u8 uses (ctx, mut book) {
-    book.reveal<TicTacToe>(id, move_code, secret, ctx.caller())
-}
-```
-
-That split shows several Fe features working together:
-
-- **Traits and associated types:** every game gets its own pure state type without forcing the solver to know its layout.
-- **Generics/monomorphization:** `solve<G: Game>`, `MatchBook::create<G>`, `commit<G>`, `reveal<G>`, and timeout logic are written once and compiled for concrete games.
-- **Effects:** pure game code has no EVM capability. Contract handlers request `Ctx` only when they need caller identity or time, and request mutable storage only when they write.
-- **Message groups:** one `ArenaMsg` defines the ABI shared by all three concrete contracts.
-- **StorageMap:** match records are keyed by match ID while each game board remains a single `u256`.
-- **`keccak_words`:** commitments use Fe's word-oriented Keccak helper without hand-written ABI buffers.
-- **Native backend:** the same game and solver modules are dependencies of a real AArch64/macOS terminal executable.
-
-Fe 26.5 does **not** currently parse a generic high-level contract item such as `contract GenericMatch<G: Game>`. The minimal reproducer is in `compiler-bugs/generic-contract.fe`. Arena therefore puts all shared behavior in generic `MatchBook` methods and keeps three thin concrete contract declarations. This preserves one implementation of the protocol while staying within the compiler's current contract syntax.
-
-## Architecture
-
-| Path | Role |
-| --- | --- |
-| `src/game.fe` | Pure `Game` trait and generic compact-word helpers |
-| `src/tictactoe.fe` | Tic-Tac-Toe rules |
-| `src/connect4.fe` | 4×4 Connect Four rules |
-| `src/nim.fe` | 1-3-5 Nim rules and XOR helper |
-| `src/solver.fe` | Generic alpha-beta negamax solver over `Game` |
-| `src/match_engine.fe` | Generic match storage and create/commit/reveal/timeout protocol |
-| `src/contracts.fe` | Shared message group and three thin concrete contracts |
-| `src/tests.fe` | Solver, protocol, and 10,200-move differential tests |
-| `demo/` | Native Fe terminal program reusing `arena` as a path dependency |
-| `scripts/gas.py` | Fresh-chain gas reproducer |
-| `scripts/demo.py` | One-command local deployment + native playable demo |
-| `compiler-bugs/` | Minimal Fe 26.5 generic-contract parser reproducer |
-
-There are two execution paths over the same rules:
-
-```text
-                         +------------------+
-                         |  Game trait      |
-                         |  pure Fe rules   |
-                         +---------+--------+
-                                   |
-                     +-------------+-------------+
-                     |                           |
-              +------v------+             +------v------+
-              | MatchBook   |             | solve<G>    |
-              | methods <G> |             | alpha-beta  |
-              | EVM storage |             |             |
-              +------+------+             +------+------+
-                     |                           |
-             concrete contracts              native CLI
-```
-
-## Build and test
-
-Install Fe 26.5.0 with the official `feup` installer and install Foundry if
-you want to run the Anvil demo or gas measurement. Arena itself uses only the
-Fe standard library; there are no package dependencies in the main ingot.
-During development, `anvil` and `cast` were kept in the contest toolchain
-directory at `../../toolchain/foundry/`; both scripts also accept normal
-`PATH` installations or explicit `ANVIL` / `CAST` environment variables.
-
-```sh
-fe --version
-# fe 26.5.0 (3dab95f)
-
 fe fmt --check
 fe check
-fe test --jobs 1
 fe build -O 2
-```
-
-The starter CI installs the pinned Fe release with:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/argotorg/fe/master/feup/feup.sh | bash -s -- --version v26.5.0 --no-modify-path
-```
-
-The current full test result is:
-
-```text
-PASS commit_reveal_and_timeout_work
-PASS compact_games_have_expected_winners
-PASS differential_replay_10200_moves
-PASS nim_solver_matches_xor_theorem
-PASS tic_tac_toe_perfect_play_is_a_draw
-
-test result: ok. 5 passed; 0 failed
-```
-
-Fe 26.5's native backend is usable as a command-line target here, not just as
-an internal compiler mode. `fe build --backend native` emits a host executable
-on x86-64 Linux and AArch64 macOS. The standard library's `std::io::host()`
-provides byte input/output through explicit `Read` and `Write` effects, and
-the demo imports Arena as an ordinary path dependency. Native output is
-separate from EVM contract output, so Arena builds the contracts with the
-default Sonatina backend and the terminal demo with the native backend.
-
-The solver checks two known game-theory facts:
-
-- optimal Tic-Tac-Toe from the empty board is a draw;
-- for every non-empty position reachable by only removing stones from the bundled 1-3-5 Nim start (47 positions), the generic solver reports a losing position exactly when the heap XOR is zero.
-
-The differential test uses fixed seeds and makes **3,400 legal moves per game, 10,200 total**. Every move goes through `commit` and `reveal` on a deployed contract in Fe's EVM test sandbox. After each move the test asks the contract for its word and winner, then compares both with a direct call to the same game's pure rules.
-
-Run just that check with:
-
-```sh
-fe test --jobs 1 -f differential_replay_10200_moves
-```
-
-### Measured gas
-
-Gas was measured on a fresh local Anvil 1.9.0 chain from `fe build -O 2`. Each row is the integer average of five legal committed moves. "Move" means one `commit` transaction plus its `reveal` transaction; deployment and match creation are excluded.
-
-| Game | Avg commit gas | Avg reveal gas | Avg gas / committed move |
-| --- | ---: | ---: | ---: |
-| Tic-Tac-Toe | 80,012 | 41,678 | **121,690** |
-| Mini Connect Four | 81,220 | 45,853 | **127,074** |
-| Nim | 78,823 | 35,535 | **114,359** |
-
-The exact per-transaction values, move sequences, deployment gas, tool versions, and optimization level are committed in `gas-results.json`. Reproduce them from a clean local chain with:
-
-```sh
+fe test --jobs 1
+python3 scripts/protocol_test.py
 python3 scripts/gas.py
-```
-
-`scripts/gas.py` starts and stops its own Anvil process and uses only unlocked local development accounts. It never reads a key file.
-
-## Demo
-
-Run:
-
-```sh
 python3 scripts/demo.py
 ```
 
-The command:
+The last command builds the EVM contract and a small native Fe solver client, starts its own local Anvil, creates a Tic-Tac-Toe match between two unlocked development accounts, and submits **every X and O turn** to the deployed contract. X follows a reproducible scripted sequence; O's move comes from the Fe `best_move<TicTacToe>` solver run on the on-chain board word. After each transaction it reads `state(uint256)` from the contract. It writes the full match to [`demo/transcript.txt`](demo/transcript.txt), including transaction gas and the final on-chain winner.
 
-1. builds all three EVM contracts with `-O 2`;
-2. builds the Fe native demo executable;
-3. starts an isolated local Anvil process;
-4. deploys `TicTacToeMatch` with a zero-second reveal timeout as a deployment smoke test;
-5. launches the native terminal game, where the human is X and `best_move<TicTacToe>` is O;
-6. stops Anvil on exit.
-
-The terminal play loop is native rather than an RPC client: it reuses the exact `TicTacToe` rules and generic solver through a local Fe ingot dependency, while the local-chain deployment proves the contract artifact is deployable. Contract behavior itself is exercised by the commit/reveal and 10,200-move tests.
-
-A captured run is committed as `demo/transcript.txt`. The interesting part looks like:
-
-```text
-Arena / Tic-Tac-Toe
-you are X; the generic perfect-play solver is O
-0 1 2
-3 4 5
-6 7 8
-move 0-8: X 1 2
-3 4 5
-6 7 8
-solver: 4
-...
-O wins
-```
-
-On the development AArch64 Mac, the Command Line Tools defaulted to a macOS 27 SDK that its own linker could not parse because of an `arm64e.x1-macos` target in the SDK text stubs. An installed macOS 26.5 SDK worked. `scripts/demo.py` selects that SDK automatically when it exists; on another affected Mac, set `ARENA_SDKROOT` to a compatible installed SDK. This affects only Fe's experimental native link step, not EVM builds or tests.
-
-## Limitations
-
-- Fe 26.5 cannot express the desired generic high-level `contract GenericMatch<G: Game>` syntax. The protocol is genuinely generic in `MatchBook`, but three small concrete contract shells are required. See `compiler-bugs/`.
-- Fe 26.5 native executables are host-targeted: executable output is supported on x86-64 Linux and AArch64 macOS, not as a portable contract runtime.
-- The solver is intentionally simple alpha-beta search without memoization. Tic-Tac-Toe and the tested Nim spaces are fast; solving the full initial 4×4 Connect Four tree is not part of the test suite.
-- The native terminal demo does not submit its human/solver turns to the deployed Anvil contract. It demonstrates reuse of the same pure Fe rules and solver; contract equivalence is covered separately by the differential test.
-- Commit/reveal hides a move only between the two transactions. It is not a general-purpose anti-front-running protocol, and a production application would need to choose timeout rules and economic incentives for its threat model.
-- Match state is intentionally compact and minimal. There is no matchmaking service, indexing UI, token transfer, wager, or upgrade mechanism.
-
-The smallest compiler issue found while building Arena is reproducible with:
+The older interactive Fe terminal game is still in `demo/` and can be built separately:
 
 ```sh
-fe check --standalone compiler-bugs/generic-contract.fe
+cd demo
+fe build --backend native --out-dir out
+./out/arena_demo
 ```
 
-It is expected to fail on Fe 26.5.0 at the generic parameter list with `contract definition requires a body`.
+On an affected macOS installation, specify `ARENA_SDKROOT` for `scripts/demo.py` or `SDKROOT` for a direct native build. An installed macOS 26.5 SDK works on the development Mac; this is a native linker issue, not an EVM requirement.
 
-## Declaration
+## Rules and protocols
 
-- **Pre-existing work:** The project began after the contest build window opened by copying the official Fe Builders Challenge starter. That untouched starting point is commit `7595019`. All Arena game rules, solver, match engine, tests, measurements, scripts, demo, and documentation were added during the contest work.
-- **Third-party code:** The official starter is the only code copied into this repository and retains its Apache-2.0 license. Fe 26.5 documentation, standard-library source, compiler tests, and examples were read as references; no other contest entrant code was read or copied. Foundry 1.9.0 was used as an external local-chain tool and is not vendored.
-- **AI assistance:** ChatGPT worker chats assisted with research, implementation, testing, measurement, and documentation; Claude reviewed the project. A human review by the team lead remains required before any submission. See `AI_DISCLOSURE.md`.
+The pure trait `Game` has an associated `State` type, `initial`, `encode`/`decode`, `turn`, `legal`, `apply`, `winner`, and `move_space` methods. Tic-Tac-Toe, Mini Connect Four, and Nim each implement it. Each compact board fits in one `u256`. `MatchBook::play<G: Game>` verifies whose turn it is, checks the rule implementation, updates the board, and returns the winner. `solve<G: Game>` and `best_move<G: Game>` use alpha-beta negamax over the same rules; they never need EVM effects.
 
-## Team
+A distinct `HiddenGame` trait has `initial`, `encode`/`decode`, `legal`, `resolve(state, move1, move2)`, and `winner`. Its `resolve` method advances a round only after **both** players reveal. RPS uses moves 0 = rock, 1 = paper, 2 = scissors and a compact score/round word. A match finishes when either player wins two rounds or after three rounds, including drawn rounds; ties in total wins are a draw. The whole RPS implementation is in `src/rps.fe` (`wc -l src/rps.fe`).
 
-Peeter Tsanev.
+The protocols have different ABIs:
 
-## License
+| Turn-based `ArenaMsg` | Simultaneous `HiddenMsg` |
+| --- | --- |
+| `create(address)` | `create(address)` |
+| `play(id, move_code)` | `commit(id, hash)` |
+| `claimTimeout(id)` | `reveal(id, move_code, secret)` |
+| `state(id)` | `claimTimeout(id)`, `state(id)` |
 
-Apache-2.0. See `LICENSE`.
+Both require distinct nonzero players. They start a deadline when the match is created and reset it after each successful state change. Actions require `block.timestamp < deadline`; a timeout may be claimed at `block.timestamp >= deadline`. The timeout duration is fixed per contract at deployment. Winner codes are 0 ongoing, 1 player one, 2 player two, 3 draw.
+
+In turn-based games, **only the player waiting for a move** can claim the timeout. This works even if the player whose turn it is never sends anything; after a successful move the clock belongs to the next player. Expired plays and all actions after a final result revert.
+
+For RPS, each player commits once, then each reveals once. The commitment binds the match ID, encoded round state, move, secret, and player address:
+
+```fe
+keccak_words([id, state, mv as u256, secret, player.word()])
+```
+
+The first commitment and the second commitment each reset the deadline, as do reveals. Neither player can reveal before **both** commitments exist. A reveal at or after the deadline **reverts** and cannot update the board, even if its hash is valid. `claimTimeout` resolves an expired phase: if just one player committed (or revealed), that player wins; if neither acted in that phase, the result is a draw. Once both reveal, their sealed moves are resolved together, the phase resets for the next round, and a new deadline begins. The match never waits forever for a missing commitment or a missing reveal.
+
+These are match-state examples, not incentive-complete production games. Timeouts use block timestamps, and a player may deliberately forfeit or force a draw when both fail to act. Secrets must remain hidden until both commitments are posted; predictable secrets defeat move secrecy. There are no deposits to discourage stalling.
+
+## Why this is Fe-specific
+
+The rules have no EVM effects. Only storage-changing `MatchBook` and `HiddenBook` methods use `StorageMap`; their concrete contract handlers request `Ctx` for caller identity and time. The solver and the native command-line client can use the same game types without a Solidity port or an off-chain reimplementation.
+
+Fe 26.5.0 rejects a high-level generic declaration such as `contract GenericMatch<G: Game>` (reproduce with `fe check --standalone compiler-bugs/generic-contract.fe`, which is expected to fail). That is why the three alternating-turn games each have a thin concrete contract shell around one generic `MatchBook`; the fourth shell uses `HiddenBook` because RPS needs a genuinely different simultaneous protocol.
+
+Source map:
+
+| Source | Purpose |
+| --- | --- |
+| `src/game.fe`, `src/hidden_game.fe` | Two small pure traits |
+| `src/tictactoe.fe`, `src/connect4.fe`, `src/nim.fe`, `src/rps.fe` | Four pure rule implementations |
+| `src/match_engine.fe`, `src/hidden_engine.fe` | Generic state machines, authorization, deadlines |
+| `src/contracts.fe` | Fe message groups and four concrete wrappers |
+| `src/solver.fe` | Generic turn-based alpha-beta solver |
+| `src/tests.fe` | Pure-rule checks, actor-specific protocol tests, differential replay |
+| `scripts/protocol_test.py` | On-chain expiry and invalid-caller checks on Anvil |
+| `scripts/gas.py`, `gas-results.json` | Fresh-Anvil direct-move gas reproducer and per-transaction readings |
+| `scripts/demo.py`, `solver_cli/`, `demo/transcript.txt` | Deployed-contract match against native Fe solver |
+| `compiler-bugs/` | Minimal generic-contract parse failure |
+
+## Tests
+
+Run `fe test --jobs 1`: all eight tests pass with Fe 26.5.0. `fe test --jobs 1 -f differential_replay_all_four_games` checks 3,400 legal moves for **each** turn-based game (10,200 direct plays in all) and 600 fully committed and revealed RPS rounds, always comparing contract state and winner with pure Fe rules. Fixed seeds and direct contract calls make it reproducible. The test uses a small forwarding contract as the second actor, rather than calling both sides from the same address.
+
+`python3 scripts/protocol_test.py` covers invalid opponents, early timeout attempts, missing first play, clock reset after a play, missing commitments, and an unanswered reveal. It advances Anvil's clock and proves that **a late reveal is rejected** before resolving the timeout. The script starts and stops an isolated local Anvil and uses only its unlocked development accounts.
+
+The known game-theory checks are also inside `fe test --jobs 1`: the initial Tic-Tac-Toe position is a draw under perfect play; for all 47 nonempty heap combinations reachable by reducing the starting 1-3-5 Nim heaps, the solver's losing positions match heap XOR zero.
+
+## Gas: one transaction instead of two
+
+`python3 scripts/gas.py` builds with `-O 2`, starts fresh Anvil 1.9.0, and measures five legal direct moves per game, excluding deployment and creation. Its per-transaction measurements are saved in [`gas-results.json`](gas-results.json). The previous two-transaction commit/reveal averages below are preserved in `git show ddef9f6:gas-results.json`; both sets used Fe 26.5.0 and the same legal move sequences.
+
+| Game | Previous commit + reveal / move | Direct `play` / move |
+| --- | ---: | ---: |
+| Tic-Tac-Toe | 121,690 | **50,270** |
+| Mini Connect Four | 127,074 | **55,685** |
+| Nim | 114,359 | **42,242** |
+
+The previous prototype allowed one address to play both sides, while the corrected measurements use two distinct unlocked development addresses. These figures demonstrate the cost of removing an unnecessary transaction in this local setup, not a universal mainnet fee prediction. No gas comparison is claimed for RPS; its commit/reveal protocol has a different purpose.
+
+## Limits and provenance
+
+Fe 26.5.0 is still an early compiler. Its generic contract syntax limitation has a minimal reproduction in `compiler-bugs/`, while native executable support is host-dependent. The perfect-play solver has no memoization: Tic-Tac-Toe and the tested Nim positions finish quickly, but exhaustive solving of the initial 4×4 Connect Four tree is not part of the project. The seeded differential test uses legal moves and is not a proof against all adversarial states.
+
+The repository began with the official Fe Builders Challenge starter (commit `7595019`); the game rules, contracts, solver, tests, scripts, and documentation were written for this entry. No other entrants' code was copied. AI assistance and the pending human review are disclosed in [`AI_DISCLOSURE.md`](AI_DISCLOSURE.md).
+
+Author: Peeter Tsanev. License: Apache-2.0, [`LICENSE`](LICENSE).
