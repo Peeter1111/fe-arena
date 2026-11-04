@@ -22,5 +22,6 @@ jobs:
           echo "$HOME/.fe/bin" >> "$GITHUB_PATH"
       - run: fe --version
       - run: fe fmt --check
-      - run: fe test
-      - run: fe build
+      - run: fe check
+      - run: fe test --jobs 1
+      - run: fe build -O 2

@@ -22,11 +22,11 @@ fn tic_tac_toe_perfect_play_is_a_draw() {
 #[test]
 fn nim_solver_matches_xor_theorem() {
     var a: u8 = 0
-    while a < 4 {
+    while a < 2 {
         var b: u8 = 0
         while b < 4 {
             var c: u8 = 0
-            while c < 4 {
+            while c < 6 {
                 if a != 0 || b != 0 || c != 0 {
                     let state = NimState(a as u256 | ((b as u256) << 4) | ((c as u256) << 8))
                     let score = solve<Nim>(state)

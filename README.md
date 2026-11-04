@@ -2,7 +2,7 @@
 
 **Pitch:** Define a deterministic game once in Fe, then reuse the exact same rules for an on-chain commit/reveal match engine, a perfect-play solver, and differential tests.
 
-**Fe highlight:** One associated-type `Game` trait drives both generic EVM `MatchBook<G>` logic and the native `solve<G>` solver, while contract capabilities stay explicit in `uses (...)`.
+**Fe highlight:** One associated-type `Game` trait drives both generic EVM `MatchBook` methods and the native `solve<G>` solver, while contract capabilities stay explicit in `uses (...)`.
 
 Arena is a small game engine built to make Fe's traits, associated types, generics, effects, messages, storage, hashing, testing, and native backend visible in one project. It ships three compact games, a shared on-chain match protocol, a generic alpha-beta solver, a 10,200-move contract-vs-rules differential test, measured gas, and a native terminal demo.
 
@@ -69,7 +69,7 @@ The match protocol does not include wagers or token transfers. It is deliberatel
 
 The main Fe-specific idea is **generic domain logic plus explicit effects**.
 
-`MatchBook` is one implementation parameterized by `G: Game`:
+`MatchBook` is one storage type whose game-dependent methods are parameterized by `G: Game`:
 
 ```fe
 pub fn reveal<G: Game>(
@@ -129,8 +129,9 @@ There are two execution paths over the same rules:
                      +-------------+-------------+
                      |                           |
               +------v------+             +------v------+
-              | MatchBook<G>|             | solve<G>    |
-              | EVM storage |             | alpha-beta  |
+              | MatchBook   |             | solve<G>    |
+              | methods <G> |             | alpha-beta  |
+              | EVM storage |             |             |
               +------+------+             +------+------+
                      |                           |
              concrete contracts              native CLI
@@ -138,7 +139,12 @@ There are two execution paths over the same rules:
 
 ## Build and test
 
-Install Fe 26.5.0 and Foundry. Arena uses only the standard library; there are no package dependencies in the main ingot.
+Install Fe 26.5.0 with the official `feup` installer and install Foundry if
+you want to run the Anvil demo or gas measurement. Arena itself uses only the
+Fe standard library; there are no package dependencies in the main ingot.
+During development, `anvil` and `cast` were kept in the contest toolchain
+directory at `../../toolchain/foundry/`; both scripts also accept normal
+`PATH` installations or explicit `ANVIL` / `CAST` environment variables.
 
 ```sh
 fe --version
@@ -148,6 +154,12 @@ fe fmt --check
 fe check
 fe test --jobs 1
 fe build -O 2
+```
+
+The starter CI installs the pinned Fe release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/argotorg/fe/master/feup/feup.sh | bash -s -- --version v26.5.0 --no-modify-path
 ```
 
 The current full test result is:
@@ -162,10 +174,18 @@ PASS tic_tac_toe_perfect_play_is_a_draw
 test result: ok. 5 passed; 0 failed
 ```
 
+Fe 26.5's native backend is usable as a command-line target here, not just as
+an internal compiler mode. `fe build --backend native` emits a host executable
+on x86-64 Linux and AArch64 macOS. The standard library's `std::io::host()`
+provides byte input/output through explicit `Read` and `Write` effects, and
+the demo imports Arena as an ordinary path dependency. Native output is
+separate from EVM contract output, so Arena builds the contracts with the
+default Sonatina backend and the terminal demo with the native backend.
+
 The solver checks two known game-theory facts:
 
 - optimal Tic-Tac-Toe from the empty board is a draw;
-- for every non-empty Nim position with each of the three heaps in `0..3` (63 positions), the generic solver reports a losing position exactly when the heap XOR is zero.
+- for every non-empty position reachable by only removing stones from the bundled 1-3-5 Nim start (47 positions), the generic solver reports a losing position exactly when the heap XOR is zero.
 
 The differential test uses fixed seeds and makes **3,400 legal moves per game, 10,200 total**. Every move goes through `commit` and `reveal` on a deployed contract in Fe's EVM test sandbox. After each move the test asks the contract for its word and winner, then compares both with a direct call to the same game's pure rules.
 
@@ -233,6 +253,7 @@ On the development AArch64 Mac, the Command Line Tools defaulted to a macOS 27 S
 ## Limitations
 
 - Fe 26.5 cannot express the desired generic high-level `contract GenericMatch<G: Game>` syntax. The protocol is genuinely generic in `MatchBook`, but three small concrete contract shells are required. See `compiler-bugs/`.
+- Fe 26.5 native executables are host-targeted: executable output is supported on x86-64 Linux and AArch64 macOS, not as a portable contract runtime.
 - The solver is intentionally simple alpha-beta search without memoization. Tic-Tac-Toe and the tested Nim spaces are fast; solving the full initial 4×4 Connect Four tree is not part of the test suite.
 - The native terminal demo does not submit its human/solver turns to the deployed Anvil contract. It demonstrates reuse of the same pure Fe rules and solver; contract equivalence is covered separately by the differential test.
 - Commit/reveal hides a move only between the two transactions. It is not a general-purpose anti-front-running protocol, and a production application would need to choose timeout rules and economic incentives for its threat model.
