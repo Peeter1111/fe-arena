@@ -1,11 +1,10 @@
 use ingot::game::Game
-use std::evm::{StorageMap, keccak_words}
+use std::evm::StorageMap
 
 pub struct MatchState {
     pub state: u256,
     pub p1: Address,
     pub p2: Address,
-    pub commitment: u256,
     pub deadline: Timestamp,
     pub forced_winner: u8,
     pub active: bool,
@@ -18,17 +17,14 @@ pub struct MatchBook {
     pub matches: StorageMap<u256, MatchState>,
 }
 
-pub fn commitment(_ id: u256, _ move_code: u8, _ secret: u256, _ player: Address) -> u256 {
-    keccak_words([id, move_code as u256, secret, player.word()])
-}
-
 impl MatchBook {
     pub fn init(mut self, _ timeout: Duration) {
         self.next_id = 1
         self.timeout = timeout
     }
 
-    pub fn create<G: Game>(mut self, _ p1: Address, _ p2: Address) -> u256 {
+    pub fn create<G: Game>(mut self, _ p1: Address, _ p2: Address, _ now: Timestamp) -> u256 {
+        assert!(p2 != Address::zero() && p1 != p2, "invalid opponent")
         let id = self.next_id
         self.next_id += 1
         self.matches
@@ -36,10 +32,9 @@ impl MatchBook {
                 key: id,
                 value: MatchState {
                     state: G::encode(state: G::initial()),
-                    p1,
-                    p2,
-                    commitment: 0,
-                    deadline: Timestamp::from_seconds(0),
+                    p1: p1,
+                    p2: p2,
+                    deadline: now + self.timeout,
                     forced_winner: 0,
                     active: true,
                 },
@@ -62,56 +57,39 @@ impl MatchBook {
         }
     }
 
-    pub fn commit<G: Game>(
-        mut self,
-        _ id: u256,
-        _ hash: u256,
-        _ caller: Address,
-        _ now: Timestamp,
-    ) {
-        var item = self.get(id)
-        assert!(self.winner<G>(id) == 0, "match finished")
-        assert!(item.commitment == 0, "move already committed")
-        let turn = G::turn(state: G::decode(item.state))
-        let expected = if turn == 1 { item.p1 } else { item.p2 }
-        assert!(caller == expected, "not your turn")
-        assert!(hash != 0, "zero commitment")
-        item.commitment = hash
-        item.deadline = now + self.timeout
-        self.matches.set(key: id, value: item)
-    }
-
-    pub fn reveal<G: Game>(
+    pub fn play<G: Game>(
         mut self,
         _ id: u256,
         _ move_code: u8,
-        _ secret: u256,
         _ caller: Address,
+        _ now: Timestamp,
     ) -> u8 {
         var item = self.get(id)
-        let turn = G::turn(state: G::decode(item.state))
-        let expected = if turn == 1 { item.p1 } else { item.p2 }
-        assert!(caller == expected, "not your turn")
-        assert!(
-            item.commitment == commitment(id, move_code, secret, caller),
-            "bad reveal",
-        )
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(now < item.deadline, "turn expired")
         let state = G::decode(item.state)
+        let expected = if G::turn(state) == 1 {
+            item.p1
+        } else {
+            item.p2
+        }
+        assert!(caller == expected, "not your turn")
         assert!(G::legal(state, move_code), "illegal move")
-        item.state = G::encode(state: G::apply(state, move_code))
-        item.commitment = 0
-        item.deadline = Timestamp::from_seconds(0)
+        let next = G::apply(state, move_code)
+        item.state = G::encode(state: next)
+        item.deadline = now + self.timeout
         self.matches.set(key: id, value: item)
-        G::winner(state: G::decode(item.state))
+        G::winner(next)
     }
 
-    pub fn claim_timeout<G: Game>(mut self, _ id: u256, _ now: Timestamp) -> u8 {
+    pub fn claim_timeout<G: Game>(mut self, _ id: u256, _ caller: Address, _ now: Timestamp) -> u8 {
         var item = self.get(id)
-        assert!(item.commitment != 0, "no pending reveal")
-        assert!(now >= item.deadline, "reveal window open")
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(now >= item.deadline, "turn window open")
         let turn = G::turn(state: G::decode(item.state))
+        let waiting = if turn == 1 { item.p2 } else { item.p1 }
+        assert!(caller == waiting, "only waiting player")
         item.forced_winner = if turn == 1 { 2 } else { 1 }
-        item.commitment = 0
         self.matches.set(key: id, value: item)
         item.forced_winner
     }

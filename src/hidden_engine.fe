@@ -1,0 +1,166 @@
+use ingot::hidden_game::HiddenGame
+use std::evm::{StorageMap, keccak_words}
+
+pub struct HiddenState {
+    pub state: u256,
+    pub p1: Address,
+    pub p2: Address,
+    pub commit1: u256,
+    pub commit2: u256,
+    pub reveal1: u8,
+    pub reveal2: u8,
+    pub phase: u8,
+    pub deadline: Timestamp,
+    pub forced_winner: u8,
+    pub active: bool,
+}
+impl Copy for HiddenState {}
+
+pub struct HiddenBook {
+    pub next_id: u256,
+    pub timeout: Duration,
+    pub matches: StorageMap<u256, HiddenState>,
+}
+
+pub fn hidden_hash(_ id: u256, _ state: u256, _ mv: u8, _ secret: u256, _ player: Address) -> u256 {
+    keccak_words([id, state, mv as u256, secret, player.word()])
+}
+
+impl HiddenBook {
+    pub fn init(mut self, _ timeout: Duration) {
+        self.next_id = 1
+        self.timeout = timeout
+    }
+
+    pub fn create<G: HiddenGame>(mut self, _ p1: Address, _ p2: Address, _ now: Timestamp) -> u256 {
+        assert!(p2 != Address::zero() && p1 != p2, "invalid opponent")
+        let id = self.next_id
+        self.next_id += 1
+        self.matches
+            .set(
+                key: id,
+                value: HiddenState {
+                    state: G::encode(state: G::initial()),
+                    p1: p1,
+                    p2: p2,
+                    commit1: 0,
+                    commit2: 0,
+                    reveal1: 0,
+                    reveal2: 0,
+                    phase: 0,
+                    deadline: now + self.timeout,
+                    forced_winner: 0,
+                    active: true,
+                },
+            )
+        id
+    }
+
+    pub fn get(self, _ id: u256) -> HiddenState {
+        let item = self.matches.get(key: id)
+        assert!(item.active, "unknown match")
+        item
+    }
+
+    pub fn winner<G: HiddenGame>(self, _ id: u256) -> u8 {
+        let item = self.get(id)
+        if item.forced_winner != 0 {
+            item.forced_winner
+        } else {
+            G::winner(state: G::decode(item.state))
+        }
+    }
+
+    pub fn commit<G: HiddenGame>(
+        mut self,
+        _ id: u256,
+        _ hash: u256,
+        _ caller: Address,
+        _ now: Timestamp,
+    ) {
+        var item = self.get(id)
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(
+            item.phase == 0 && now < item.deadline,
+            "commit window closed",
+        )
+        assert!(hash != 0, "zero commitment")
+        if caller == item.p1 {
+            assert!(item.commit1 == 0, "already committed")
+            item.commit1 = hash
+        } else {
+            assert!(caller == item.p2, "not a player")
+            assert!(item.commit2 == 0, "already committed")
+            item.commit2 = hash
+        }
+        if item.commit1 != 0 && item.commit2 != 0 {
+            item.phase = 1
+        }
+        item.deadline = now + self.timeout
+        self.matches.set(key: id, value: item)
+    }
+
+    pub fn reveal<G: HiddenGame>(
+        mut self,
+        _ id: u256,
+        _ mv: u8,
+        _ secret: u256,
+        _ caller: Address,
+        _ now: Timestamp,
+    ) -> u8 {
+        var item = self.get(id)
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(
+            item.phase == 1 && now < item.deadline,
+            "reveal window closed",
+        )
+        assert!(G::legal(G::decode(item.state), mv), "illegal move")
+        let digest = hidden_hash(id, item.state, mv, secret, caller)
+        if caller == item.p1 {
+            assert!(item.reveal1 == 0 && item.commit1 == digest, "bad reveal")
+            item.reveal1 = mv + 1
+        } else {
+            assert!(caller == item.p2, "not a player")
+            assert!(item.reveal2 == 0 && item.commit2 == digest, "bad reveal")
+            item.reveal2 = mv + 1
+        }
+        if item.reveal1 != 0 && item.reveal2 != 0 {
+            item.state = G::encode(
+                state: G::resolve(G::decode(item.state), item.reveal1 - 1, item.reveal2 - 1),
+            )
+            item.commit1 = 0
+            item.commit2 = 0
+            item.reveal1 = 0
+            item.reveal2 = 0
+            item.phase = 0
+        }
+        item.deadline = now + self.timeout
+        self.matches.set(key: id, value: item)
+        G::winner(state: G::decode(item.state))
+    }
+
+    pub fn claim_timeout<G: HiddenGame>(
+        mut self,
+        _ id: u256,
+        _ caller: Address,
+        _ now: Timestamp,
+    ) -> u8 {
+        var item = self.get(id)
+        assert!(self.winner<G>(id) == 0, "match finished")
+        assert!(caller == item.p1 || caller == item.p2, "not a player")
+        assert!(now >= item.deadline, "window open")
+        let a = if item.phase == 0 {
+            item.commit1 != 0
+        } else {
+            item.reveal1 != 0
+        }
+        let b = if item.phase == 0 {
+            item.commit2 != 0
+        } else {
+            item.reveal2 != 0
+        }
+        item.forced_winner = if a && !b { 1 } else if b && !a { 2 } else { 3 }
+        self.matches.set(key: id, value: item)
+        item.forced_winner
+    }
+}

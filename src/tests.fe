@@ -1,22 +1,59 @@
 use ingot::{
     ArenaMsg,
+    HiddenMsg,
     Connect4Match,
     Game,
+    HiddenGame,
     MiniConnect4,
     Nim,
     NimMatch,
     NimState,
+    RpsMatch,
+    RpsThree,
     TicTacToe,
     TicTacToeMatch,
-    commitment,
+    best_move,
+    hidden_hash,
     solve,
     xor_value,
 }
-use std::evm::Evm
+use std::abi::sol
+use std::evm::{Evm, seconds}
+
+// The test actor makes calls from a genuinely different address.
+msg ActorMsg {
+    #[selector = sol("play(address,uint256,uint8)")]
+    Play { target: Address, id: u256, move_code: u8 } -> u8,
+    #[selector = sol("commit(address,uint256,uint256)")]
+    Commit { target: Address, id: u256, hash: u256 },
+    #[selector = sol("reveal(address,uint256,uint8,uint256)")]
+    Reveal { target: Address, id: u256, move_code: u8, secret: u256 } -> u8,
+    #[selector = sol("claim(address,uint256)")]
+    Claim { target: Address, id: u256 } -> u8,
+}
+contract Actor {
+    recv ActorMsg {
+        Play { target, id, move_code } -> u8 uses (call: mut Call) {
+            target.call(ArenaMsg::Play { id, move_code })
+        }
+        Commit { target, id, hash } uses (call: mut Call) {
+            target.call(HiddenMsg::Commit { id, hash })
+        }
+        Reveal { target, id, move_code, secret } -> u8
+        uses (call: mut Call)
+        {
+            target.call(HiddenMsg::Reveal { id, move_code, secret })
+        }
+        Claim { target, id } -> u8 uses (call: mut Call) {
+            target.call(ArenaMsg::ClaimTimeout { id })
+        }
+    }
+}
 
 #[test]
 fn tic_tac_toe_perfect_play_is_a_draw() {
     assert!(solve<TicTacToe>(TicTacToe::initial()) == 0)
+    assert!(best_move<TicTacToe>(TicTacToe::initial()) < 9)
 }
 
 #[test]
@@ -54,71 +91,233 @@ fn compact_games_have_expected_winners() {
         c = MiniConnect4::apply(c, mv)
     }
     assert!(MiniConnect4::winner(c) == 1)
+
+    let r1 = RpsThree::resolve(RpsThree::initial(), 0, 2)
+    let r2 = RpsThree::resolve(r1, 1, 0)
+    assert!(RpsThree::winner(r2) == 1)
+    let d1 = RpsThree::resolve(RpsThree::initial(), 0, 0)
+    let d2 = RpsThree::resolve(d1, 1, 1)
+    let d3 = RpsThree::resolve(d2, 2, 2)
+    assert!(RpsThree::winner(d3) == 3)
 }
 
 #[test]
-fn commit_reveal_and_timeout_work() uses (evm: mut Evm) {
+fn direct_play_and_invalid_opponents() uses (evm: mut Evm) {
     let player = evm.address()
-    let target = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 1)
-    let id: u256 = evm
-        .call(
+    let target = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (seconds(100000),), salt: 1)
+    let actor = evm.create2<Actor>(value: Wei::zero(), args: (), salt: 2)
+    assert!(
+        !evm.try_call(
             addr: target,
             gas: 500000,
             value: Wei::zero(),
             message: ArenaMsg::Create { opponent: player },
         )
-    let secret: u256 = 12345
-    let hash = commitment(id, 0, secret, player)
-    evm.call(
-        addr: target,
-        gas: 500000,
-        value: Wei::zero(),
-        message: ArenaMsg::Commit { id, hash },
+            .success(),
     )
-    let winner: u8 = evm
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Create { opponent: Address::zero() },
+        )
+            .success(),
+    )
+    let id: u256 = evm
         .call(
             addr: target,
             gas: 500000,
             value: Wei::zero(),
-            message: ArenaMsg::Reveal { id, move_code: 0, secret },
+            message: ArenaMsg::Create { opponent: actor },
         )
-    assert!(winner == 0)
-    let (word, remote_winner): (u256, u8) = evm
+    let first: u8 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Play { id, move_code: 0 },
+        )
+    assert!(first == 0)
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Play { id, move_code: 1 },
+        )
+            .success(),
+    )
+    let second: u8 = evm
+        .call(
+            addr: actor,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ActorMsg::Play { target, id, move_code: 3 },
+        )
+    assert!(second == 0)
+    let (word, winner): (u256, u8) = evm
         .call(
             addr: target,
             gas: 500000,
             value: Wei::zero(),
             message: ArenaMsg::State { id },
         )
-    let direct = TicTacToe::apply(TicTacToe::initial(), 0)
-    assert!(word == TicTacToe::encode(direct))
-    assert!(remote_winner == 0)
+    let direct = TicTacToe::apply(TicTacToe::apply(TicTacToe::initial(), 0), 3)
+    assert!(word == TicTacToe::encode(direct) && winner == 0)
+}
 
-    let timeout_id: u256 = evm
+#[test]
+fn unplayed_turn_can_be_claimed() uses (evm: mut Evm) {
+    let player = evm.address()
+    let target = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 3)
+    let actor = evm.create2<Actor>(value: Wei::zero(), args: (), salt: 4)
+    let id: u256 = evm
         .call(
             addr: target,
             gas: 500000,
             value: Wei::zero(),
-            message: ArenaMsg::Create { opponent: player },
+            message: ArenaMsg::Create { opponent: actor },
         )
-    let timeout_hash = commitment(timeout_id, 4, 9, player)
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::ClaimTimeout { id },
+        )
+            .success(),
+    )
+    let winner: u8 = evm
+        .call(
+            addr: actor,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ActorMsg::Claim { target, id },
+        )
+    assert!(winner == 2)
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ArenaMsg::Play { id, move_code: 0 },
+        )
+            .success(),
+    )
+    assert!(player != actor)
+}
+
+#[test]
+fn hidden_game_needs_both_commits_and_reveals() uses (evm: mut Evm) {
+    let player = evm.address()
+    let target = evm.create2<RpsMatch>(value: Wei::zero(), args: (seconds(100000),), salt: 5)
+    let actor = evm.create2<Actor>(value: Wei::zero(), args: (), salt: 6)
+    let id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Create { opponent: actor },
+        )
+    let h1 = hidden_hash(id, 0, 0, 17, player)
+    let h2 = hidden_hash(id, 0, 2, 23, actor)
     evm.call(
         addr: target,
         gas: 500000,
         value: Wei::zero(),
-        message: ArenaMsg::Commit { id: timeout_id, hash: timeout_hash },
+        message: HiddenMsg::Commit { id, hash: h1 },
     )
-    let timeout_winner: u8 = evm
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Reveal { id, move_code: 0, secret: 17 },
+        )
+            .success(),
+    )
+    evm.call(
+        addr: actor,
+        gas: 500000,
+        value: Wei::zero(),
+        message: ActorMsg::Commit { target, id, hash: h2 },
+    )
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Reveal { id, move_code: 1, secret: 17 },
+        )
+            .success(),
+    )
+    let mid: u8 = evm
         .call(
             addr: target,
             gas: 500000,
             value: Wei::zero(),
-            message: ArenaMsg::ClaimTimeout { id: timeout_id },
+            message: HiddenMsg::Reveal { id, move_code: 0, secret: 17 },
         )
-    assert!(timeout_winner == 2)
+    assert!(mid == 0)
+    let (before, _): (u256, u8) = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::State { id },
+        )
+    assert!(before == 0)
+    let last: u8 = evm
+        .call(
+            addr: actor,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ActorMsg::Reveal { target, id, move_code: 2, secret: 23 },
+        )
+    let (after, remote_winner): (u256, u8) = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::State { id },
+        )
+    assert!(last == 0 && remote_winner == 0)
+    assert!(
+        after == RpsThree::encode(RpsThree::resolve(RpsThree::initial(), 0, 2)),
+    )
 }
 
-fn next_random(_ seed: u256) -> u256 {
+#[test]
+fn hidden_no_commit_expires() uses (evm: mut Evm) {
+    let target = evm.create2<RpsMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 7)
+    let id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Create { opponent: Address::from_word_truncate(123) },
+        )
+    let winner: u8 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::ClaimTimeout { id },
+        )
+    assert!(winner == 3)
+    assert!(
+        !evm.try_call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Commit { id, hash: 42 },
+        )
+            .success(),
+    )
+}
+
+fn next_random(seed: u256) -> u256 {
     var x = seed
     x = x ^ (x << 13)
     x = x ^ (x >> 7)
@@ -139,10 +338,9 @@ fn pick_legal<G: Game>(_ state: G::State, _ random: u256) -> u8 {
     255
 }
 
-fn replay<G: Game>(_ target: Address, _ wanted: u256, _ seed0: u256) -> u256
+fn replay<G: Game>(_ target: Address, _ actor: Address, _ wanted: u256, _ seed0: u256) -> u256
 uses (evm: mut Evm)
 {
-    let player = evm.address()
     var seed = seed0
     var moved: u256 = 0
     var state = G::initial()
@@ -151,9 +349,8 @@ uses (evm: mut Evm)
             addr: target,
             gas: 500000,
             value: Wei::zero(),
-            message: ArenaMsg::Create { opponent: player },
+            message: ArenaMsg::Create { opponent: actor },
         )
-
     while moved < wanted {
         if G::winner(state) != 0 {
             state = G::initial()
@@ -162,29 +359,29 @@ uses (evm: mut Evm)
                     addr: target,
                     gas: 500000,
                     value: Wei::zero(),
-                    message: ArenaMsg::Create { opponent: player },
+                    message: ArenaMsg::Create { opponent: actor },
                 )
         }
         seed = next_random(seed)
         let mv = pick_legal<G>(state, seed)
         assert!(mv != 255)
-        let secret = seed ^ moved ^ (id << 32)
-        let hash = commitment(id, mv, secret, player)
-        evm.call(
-            addr: target,
-            gas: 500000,
-            value: Wei::zero(),
-            message: ArenaMsg::Commit { id, hash },
-        )
-        let remote_reveal: u8 = evm
-            .call(
+        let remote: u8 = if G::turn(state) == 1 {
+            evm.call(
                 addr: target,
                 gas: 500000,
                 value: Wei::zero(),
-                message: ArenaMsg::Reveal { id, move_code: mv, secret },
+                message: ArenaMsg::Play { id, move_code: mv },
             )
+        } else {
+            evm.call(
+                addr: actor,
+                gas: 500000,
+                value: Wei::zero(),
+                message: ActorMsg::Play { target, id, move_code: mv },
+            )
+        }
         state = G::apply(state, mv)
-        let (word, remote_winner): (u256, u8) = evm
+        let (word, winner): (u256, u8) = evm
             .call(
                 addr: target,
                 gas: 500000,
@@ -192,20 +389,95 @@ uses (evm: mut Evm)
                 message: ArenaMsg::State { id },
             )
         assert!(word == G::encode(state))
-        assert!(remote_winner == G::winner(state))
-        assert!(remote_reveal == remote_winner)
+        assert!(winner == G::winner(state) && remote == winner)
+        moved += 1
+    }
+    moved
+}
+
+fn replay_hidden(_ target: Address, _ actor: Address, _ wanted: u256, _ seed0: u256) -> u256
+uses (evm: mut Evm)
+{
+    let player = evm.address()
+    var seed = seed0
+    var moved: u256 = 0
+    var state = RpsThree::initial()
+    var id: u256 = evm
+        .call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Create { opponent: actor },
+        )
+    while moved < wanted {
+        if RpsThree::winner(state) != 0 {
+            state = RpsThree::initial()
+            id = evm
+                .call(
+                    addr: target,
+                    gas: 500000,
+                    value: Wei::zero(),
+                    message: HiddenMsg::Create { opponent: actor },
+                )
+        }
+        seed = next_random(seed)
+        let a: u8 = (seed % 3).downcast_unchecked()
+        seed = next_random(seed)
+        let b: u8 = (seed % 3).downcast_unchecked()
+        let h1 = hidden_hash(id, RpsThree::encode(state), a, seed, player)
+        let h2 = hidden_hash(id, RpsThree::encode(state), b, seed + 1, actor)
+        evm.call(
+            addr: target,
+            gas: 500000,
+            value: Wei::zero(),
+            message: HiddenMsg::Commit { id, hash: h1 },
+        )
+        evm.call(
+            addr: actor,
+            gas: 500000,
+            value: Wei::zero(),
+            message: ActorMsg::Commit { target, id, hash: h2 },
+        )
+        let first: u8 = evm
+            .call(
+                addr: target,
+                gas: 500000,
+                value: Wei::zero(),
+                message: HiddenMsg::Reveal { id, move_code: a, secret: seed },
+            )
+        assert!(first == 0)
+        let second: u8 = evm
+            .call(
+                addr: actor,
+                gas: 500000,
+                value: Wei::zero(),
+                message: ActorMsg::Reveal { target, id, move_code: b, secret: seed + 1 },
+            )
+        state = RpsThree::resolve(state, a, b)
+        let (word, winner): (u256, u8) = evm
+            .call(
+                addr: target,
+                gas: 500000,
+                value: Wei::zero(),
+                message: HiddenMsg::State { id },
+            )
+        assert!(word == RpsThree::encode(state))
+        assert!(winner == RpsThree::winner(state) && second == winner)
         moved += 1
     }
     moved
 }
 
 #[test]
-fn differential_replay_10200_moves() uses (evm: mut Evm) {
-    let ttt = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 10)
-    let c4 = evm.create2<Connect4Match>(value: Wei::zero(), args: (Duration::zero(),), salt: 11)
-    let nim = evm.create2<NimMatch>(value: Wei::zero(), args: (Duration::zero(),), salt: 12)
-    let a = replay<TicTacToe>(ttt, 3400, 0x12345678)
-    let b = replay<MiniConnect4>(c4, 3400, 0x89abcdef)
-    let c = replay<Nim>(nim, 3400, 0xf00dcafe)
-    assert!(a + b + c == 10200)
+fn differential_replay_all_four_games() uses (evm: mut Evm) {
+    let actor = evm.create2<Actor>(value: Wei::zero(), args: (), salt: 20)
+    let ttt = evm.create2<TicTacToeMatch>(value: Wei::zero(), args: (seconds(100000),), salt: 10)
+    let c4 = evm.create2<Connect4Match>(value: Wei::zero(), args: (seconds(100000),), salt: 11)
+    let nim = evm.create2<NimMatch>(value: Wei::zero(), args: (seconds(100000),), salt: 12)
+    let rps = evm.create2<RpsMatch>(value: Wei::zero(), args: (seconds(100000),), salt: 13)
+    let a = replay<TicTacToe>(ttt, actor, 3400, 0x12345678)
+    let b = replay<MiniConnect4>(c4, actor, 3400, 0x89abcdef)
+    let c = replay<Nim>(nim, actor, 3400, 0xf00dcafe)
+    let d = replay_hidden(rps, actor, 600, 0xface1234)
+    assert!(a + b + c == 10200 && d == 600)
 }

@@ -1,7 +1,10 @@
 pub use game::{Game, apply_word, initial_word, turn_word, winner_word}
+pub use hidden_game::HiddenGame
+pub use hidden_engine::{HiddenBook, HiddenState, hidden_hash}
+pub use rps::{RpsThree, RpsState}
 pub use tictactoe::{TicTacToe, TicTacToeState}
 pub use connect4::{Connect4State, MiniConnect4}
 pub use nim::{Nim, NimState, xor_value}
 pub use solver::{best_move, solve}
-pub use match_engine::{MatchBook, MatchState, commitment}
-pub use contracts::{ArenaMsg, Connect4Match, NimMatch, TicTacToeMatch}
+pub use match_engine::{MatchBook, MatchState}
+pub use contracts::{ArenaMsg, HiddenMsg, Connect4Match, NimMatch, TicTacToeMatch, RpsMatch}

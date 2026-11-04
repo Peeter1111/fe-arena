@@ -1,0 +1,11 @@
+/// Both players submit hidden moves before the round advances.
+pub trait HiddenGame {
+    type State: Copy
+    fn initial() -> Self::State
+    fn encode(_ state: Self::State) -> u256
+    fn decode(_ word: u256) -> Self::State
+    fn legal(_ state: Self::State, _ mv: u8) -> bool
+    fn resolve(_ state: Self::State, _ p1: u8, _ p2: u8) -> Self::State
+    /// 0 = ongoing, 1/2 = winner, 3 = draw.
+    fn winner(_ state: Self::State) -> u8
+}
