@@ -1,0 +1,6 @@
+[ingot]
+name = "arena_solver_cli"
+version = "0.1.0"
+
+[dependencies]
+arena = ".."

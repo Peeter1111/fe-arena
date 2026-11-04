@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure Arena commit+reveal gas on a fresh local Anvil chain."""
+"""Measure Arena direct-play gas on a fresh local Anvil chain."""
 
 from __future__ import annotations
 
@@ -77,11 +77,11 @@ def send(sender: str, target: str, signature: str, *args: object) -> dict:
     return receipt
 
 
-def deploy(sender: str, contract: str) -> tuple[str, int]:
+def deploy(sender: str, contract: str, timeout: int = 3600) -> tuple[str, int]:
     bytecode = (ROOT / "out" / f"{contract}.bin").read_text().strip()
     if bytecode.startswith("0x"):
         bytecode = bytecode[2:]
-    constructor = run([CAST, "abi-encode", "f(uint256)", "0"])
+    constructor = run([CAST, "abi-encode", "f(uint256)", str(timeout)])
     if constructor.startswith("0x"):
         constructor = constructor[2:]
     receipt = json.loads(
@@ -105,61 +105,34 @@ def deploy(sender: str, contract: str) -> tuple[str, int]:
     return receipt["contractAddress"], int(receipt["gasUsed"], 16)
 
 
-def move_hash(match_id: int, move_code: int, secret: int, sender: str) -> str:
-    encoded = run(
-        [
-            CAST,
-            "abi-encode",
-            "f(uint256,uint256,uint256,address)",
-            str(match_id),
-            str(move_code),
-            str(secret),
-            sender,
-        ]
-    )
-    return run([CAST, "keccak", encoded])
-
-
 def gas_used(receipt: dict) -> int:
     return int(receipt["gasUsed"], 16)
 
 
 def measure_game(
-    sender: str, contract: str, moves: list[int], secret_base: int
+    sender: str, opponent: str, contract: str, moves: list[int]
 ) -> dict[str, object]:
     address, deploy_gas = deploy(sender, contract)
-    send(sender, address, "create(address)(uint256)", sender)
+    send(sender, address, "create(address)(uint256)", opponent)
     match_id = 1
-    commits: list[int] = []
-    reveals: list[int] = []
+    plays: list[int] = []
     for index, move_code in enumerate(moves):
-        secret = secret_base + index
-        digest = move_hash(match_id, move_code, secret, sender)
-        commit_receipt = send(
-            sender, address, "commit(uint256,uint256)", match_id, digest
-        )
-        reveal_receipt = send(
-            sender,
+        player = sender if index % 2 == 0 else opponent
+        receipt = send(
+            player,
             address,
-            "reveal(uint256,uint8,uint256)(uint8)",
+            "play(uint256,uint8)(uint8)",
             match_id,
             move_code,
-            secret,
         )
-        commits.append(gas_used(commit_receipt))
-        reveals.append(gas_used(reveal_receipt))
-    totals = [a + b for a, b in zip(commits, reveals)]
+        plays.append(gas_used(receipt))
     return {
         "contract": contract,
         "address": address,
         "deployment_gas": deploy_gas,
         "moves": moves,
-        "commit_gas": commits,
-        "reveal_gas": reveals,
-        "total_gas": totals,
-        "average_commit_gas": sum(commits) // len(commits),
-        "average_reveal_gas": sum(reveals) // len(reveals),
-        "average_move_gas": sum(totals) // len(totals),
+        "play_gas": plays,
+        "average_move_gas": sum(plays) // len(plays),
     }
 
 
@@ -175,14 +148,15 @@ def main() -> int:
         wait_for_rpc(anvil)
         accounts = json.loads(run([CAST, "rpc", "--rpc-url", RPC, "eth_accounts"]))
         sender = accounts[0]
+        opponent = accounts[1]
         games = [
-            ("TicTacToeMatch", [0, 3, 1, 4, 2], 1000),
-            ("Connect4Match", [0, 1, 0, 1, 0], 2000),
-            ("NimMatch", [16, 8, 17, 0, 16], 3000),
+            ("TicTacToeMatch", [0, 3, 1, 4, 2]),
+            ("Connect4Match", [0, 1, 0, 1, 0]),
+            ("NimMatch", [16, 8, 17, 0, 16]),
         ]
         measurements = [
-            measure_game(sender, contract, moves, secret)
-            for contract, moves, secret in games
+            measure_game(sender, opponent, contract, moves)
+            for contract, moves in games
         ]
     finally:
         anvil.terminate()
@@ -197,19 +171,15 @@ def main() -> int:
         "anvil_version": run([ANVIL, "--version"]).splitlines()[0],
         "optimization": 2,
         "sender": sender,
+        "opponent": opponent,
         "games": measurements,
     }
     output_path = ROOT / "gas-results.json"
     output_path.write_text(json.dumps(output, indent=2) + "\n")
 
-    print("game             commit avg   reveal avg   committed move avg")
+    print("game             direct move avg")
     for item in measurements:
-        print(
-            f"{item['contract']:<17}"
-            f"{item['average_commit_gas']:>11}"
-            f"{item['average_reveal_gas']:>13}"
-            f"{item['average_move_gas']:>21}"
-        )
+        print(f"{item['contract']:<17}{item['average_move_gas']:>15}")
     print(f"wrote {output_path.relative_to(ROOT)}")
     return 0
 

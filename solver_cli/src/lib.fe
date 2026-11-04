@@ -1,0 +1,25 @@
+use arena::{Game, TicTacToe, best_move}
+use std::io::{Read, Write, host, read_char, write_char, writeln}
+
+/// Read a decimal compact board word, print the native Fe solver's move.
+pub fn main() -> i32 {
+    var word: u256 = 0
+    with (Read = host(), Write = host()) {
+        var ch = read_char()
+        while ch >= 48 && ch <= 57 {
+            let digit: u8 = (ch - 48).downcast_unchecked()
+            word = word * 10 + digit as u256
+            ch = read_char()
+        }
+        let state = TicTacToe::decode(word)
+        assert!(
+            TicTacToe::winner(state) == 0 && TicTacToe::turn(state) == 2,
+            "not O's turn",
+        )
+        let mv = best_move<TicTacToe>(state)
+        assert!(mv < 9, "no legal move")
+        write_char(48 + mv as i32)
+        writeln("")
+    }
+    0
+}
