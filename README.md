@@ -105,6 +105,6 @@ The old benchmark stored whole-gas averages with integer truncation; the table r
 
 Fe 26.5.0 is still an early compiler. Its generic contract syntax limitation has a minimal reproduction in `compiler-bugs/`, while native executable support is host-dependent. The perfect-play solver has no memoization: Tic-Tac-Toe and the tested Nim positions finish quickly, but exhaustive solving of the initial 4×4 Connect Four tree is not part of the project. The seeded differential test uses legal moves and is not a proof against all adversarial states.
 
-The repository began with the official Fe Builders Challenge starter (commit `7595019`); the game rules, contracts, solver, tests, scripts, and documentation were written for this entry. No other entrants' code was copied. AI assistance and the pending human review are disclosed in [`AI_DISCLOSURE.md`](AI_DISCLOSURE.md).
+The repository began with the official Fe Builders Challenge starter (commit `7595019`); the game rules, contracts, solver, tests, scripts, and documentation were written for this entry. No other entrants' code was copied. AI assistance and who reviewed the code are disclosed in [`AI_DISCLOSURE.md`](AI_DISCLOSURE.md).
 
 Author: Peeter Tsanev. License: Apache-2.0, [`LICENSE`](LICENSE).
