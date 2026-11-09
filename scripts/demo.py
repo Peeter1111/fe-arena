@@ -45,6 +45,9 @@ def run(args: list[str], cwd: Path = ROOT) -> str:
 
 def native_env() -> dict[str, str]:
     env = dict(os.environ)
+    if sys.platform == "darwin":
+        # Fe invokes cc by name. Prefer Apple's compiler over shell launchers.
+        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
     if env.get("ARENA_SDKROOT"):
         env["SDKROOT"] = env["ARENA_SDKROOT"]
     elif sys.platform == "darwin":

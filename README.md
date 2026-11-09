@@ -29,7 +29,7 @@ fe build --backend native --out-dir out
 ./out/arena_demo
 ```
 
-On an affected macOS installation, specify `ARENA_SDKROOT` for `scripts/demo.py` or `SDKROOT` for a direct native build. An installed macOS 26.5 SDK works on the development Mac; this is a native linker issue, not an EVM requirement.
+On an affected macOS installation, specify `ARENA_SDKROOT` for `scripts/demo.py` or `SDKROOT` for a direct native build. An installed macOS 26.5 SDK works on the development Mac. The demo selects Apple's `cc` through `/usr/bin`; for a direct native build, ensure `cc` on `PATH` is a C compiler. These are native linker requirements.
 
 ## Rules and protocols
 
