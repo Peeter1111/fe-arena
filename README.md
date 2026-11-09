@@ -95,11 +95,11 @@ The known game-theory checks are also inside `fe test --jobs 1`: the initial Tic
 
 | Game | Previous commit + reveal / move | Direct `play` / move |
 | --- | ---: | ---: |
-| Tic-Tac-Toe | 121,690 | **50,270** |
-| Mini Connect Four | 127,074 | **55,685** |
-| Nim | 114,359 | **42,242** |
+| Tic-Tac-Toe | 121,690.4 | **50,270.6** |
+| Mini Connect Four | 127,074.0 | **55,685.2** |
+| Nim | 114,359.2 | **42,242.8** |
 
-The previous prototype allowed one address to play both sides, while the corrected measurements use two distinct unlocked development addresses. These figures demonstrate the cost of removing an unnecessary transaction in this local setup, not a universal mainnet fee prediction. No gas comparison is claimed for RPS; its commit/reveal protocol has a different purpose.
+The old benchmark stored whole-gas averages with integer truncation; the table recomputes exact means from its per-transaction readings. The previous prototype allowed one address to play both sides, while the corrected measurements use two distinct unlocked development addresses. These figures demonstrate the cost of removing an unnecessary transaction in this local setup, not a universal mainnet fee prediction. No gas comparison is claimed for RPS; its commit/reveal protocol has a different purpose.
 
 ## Limits and provenance
 

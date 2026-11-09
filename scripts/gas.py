@@ -132,7 +132,7 @@ def measure_game(
         "deployment_gas": deploy_gas,
         "moves": moves,
         "play_gas": plays,
-        "average_move_gas": sum(plays) // len(plays),
+        "average_move_gas": sum(plays) / len(plays),
     }
 
 

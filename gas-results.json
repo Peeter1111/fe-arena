@@ -23,7 +23,7 @@
         47808,
         46692
       ],
-      "average_move_gas": 50270
+      "average_move_gas": 50270.6
     },
     {
       "contract": "Connect4Match",
@@ -43,7 +43,7 @@
         53025,
         53583
       ],
-      "average_move_gas": 55685
+      "average_move_gas": 55685.2
     },
     {
       "contract": "NimMatch",
@@ -63,7 +63,7 @@
         42247,
         42327
       ],
-      "average_move_gas": 42242
+      "average_move_gas": 42242.8
     }
   ]
 }
